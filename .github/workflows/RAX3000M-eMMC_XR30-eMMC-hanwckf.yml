@@ -14,6 +14,14 @@ on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
+      DRIVER:
+        description: 'Choose WiFi Driver'
+        required: true
+        default: 'v7.6.7.2'
+        type: choice
+        options:
+        - v7.6.7.2
+        - v7.6.6.1
       EEPROM:
         description: 'Use nx30pro eeprom and fixed WiFi MAC address'
         required: true
@@ -126,6 +134,13 @@ jobs:
                 sed -i -e '/bus-width = <8>;/ a\	cap-mmc-highspeed;' "${{ env.RAX3000M_EMMC_DTS_FILE }}"
         fi
         
+    - name: 设置WiFi驱动版本
+      run: |
+        cd openwrt
+        if [ ${{ github.event.inputs.DRIVER }} == 'v7.6.6.1' ]; then
+                sed -i 's/CONFIG_MTK_MT_WIFI_DRIVER_VERSION_7672=y/CONFIG_MTK_MT_WIFI_DRIVER_VERSION_7661=y/g' .config
+        fi
+        
     - name: 使用nx30pro的高功率eeprom并固定WiFi MAC地址
       if: github.event.inputs.EEPROM == 'true'
       run: |
@@ -182,6 +197,11 @@ jobs:
         
         sed -nE 's/.*(192.168\.[0-9]+\.[0-9]+).*/\1/p' package/base-files/files/bin/config_generate | head -n 1 > IP_ADDR
         [ -s IP_ADDR ] && echo "IP_ADDR=$(cat IP_ADDR)" >> $GITHUB_ENV
+        if grep -q 'CONFIG_MTK_MT_WIFI_DRIVER_VERSION_7672=y' .config; then
+                echo "DRIVER_VERSION=-v7672" >> $GITHUB_ENV
+        else
+                echo "DRIVER_VERSION=-v7661" >> $GITHUB_ENV
+        fi
         if [ "$md5_file1" == "$md5_file2" ]; then
                 echo "EEPROM=-eeprom" >> $GITHUB_ENV
         else
@@ -213,7 +233,7 @@ jobs:
         rm -rf packages
         sudo -E apt-get -qq install rename
         for val in "${devices[@]}"; do
-          rename "s/.*${val}/${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${val}${{ env.EEPROM }}${{ env.WIFI_INTERFACE }}${{ env.BUILD_DOCKERMAN }}/" *
+          rename "s/.*${val}/${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${val}${{ env.DRIVER_VERSION }}${{ env.EEPROM }}${{ env.BUILD_DOCKERMAN }}/" *
           echo "$val"
         done
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -223,7 +243,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: ${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${{ env.UPLOAD_TAG_NAME }}${{ env.EEPROM }}${{ env.WIFI_INTERFACE }}${{ env.BUILD_DOCKERMAN }}
+        name: ${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${{ env.UPLOAD_TAG_NAME }}${{ env.DRIVER_VERSION }}${{ env.EEPROM }}${{ env.BUILD_DOCKERMAN }}
         path: ${{ env.FIRMWARE }}
         
     - name: 生成固件Release标签
@@ -232,7 +252,13 @@ jobs:
       run: |
         touch release.txt
         echo "- 使用源码：${{ env.REPO_URL }}" >> release.txt
+        echo "- 使用分支：${{ env.REPO_BRANCH }}" >> release.txt
         echo "- 登录地址：${{ env.IP_ADDR }}" >> release.txt
+        if [[ "${{ env.DRIVER_VERSION }}" == '-v7672' ]]; then
+               echo "- 使用WiFi驱动版本v7.6.7.2" >> release.txt
+        else
+               echo "- 使用WiFi驱动版本v7.6.6.1" >> release.txt
+        fi
         if [[ "${{ env.EEPROM }}" == '-eeprom' ]]; then
                echo "- 使用nx30pro高功率eeprom并固定WiFi MAC地址" >> release.txt
         else
@@ -248,7 +274,7 @@ jobs:
         else
                 echo "- 未编译luci-app-dockerman" >> release.txt
         fi
-        echo "release_tag=${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${{ env.UPLOAD_TAG_NAME }}${{ env.EEPROM }}${{ env.WIFI_INTERFACE }}${{ env.BUILD_DOCKERMAN }}" >> $GITHUB_OUTPUT
+        echo "release_tag=${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${{ env.UPLOAD_TAG_NAME }}${{ env.DRIVER_VERSION }}${{ env.EEPROM }}${{ env.BUILD_DOCKERMAN }}" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
         
     - name: 发布固件至Release
@@ -258,6 +284,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         files: ${{ env.FIRMWARE }}/*
-        name: ${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${{ env.UPLOAD_TAG_NAME }}${{ env.EEPROM }}${{ env.WIFI_INTERFACE }}${{ env.BUILD_DOCKERMAN }}
+        name: ${{ env.FILE_DATE }}-${{ env.OPENWRT_NAME }}-${{ env.UPLOAD_TAG_NAME }}${{ env.DRIVER_VERSION }}${{ env.EEPROM }}${{ env.BUILD_DOCKERMAN }}
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
